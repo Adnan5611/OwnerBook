@@ -1,0 +1,68 @@
+{
+  "name": "ownerbook",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "engines": {
+    "node": ">=22.13.0 <23"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "jest --runInBand",
+    "test:db": "tsx scripts/test-database.ts",
+    "test:postgres": "tsx scripts/test-postgres.ts",
+    "test:ledger": "tsx scripts/test-ledger.ts",
+    "check:android": "tsx scripts/check-android.ts",
+    "check:env": "node --env-file-if-exists=.env --import tsx scripts/check-env.ts",
+    "eas-build-post-install": "npm run check:env",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run test:db && npm run test:postgres && npm run test:ledger",
+    "build:android:preview": "npx --yes eas-cli@27.2.0 build --platform android --profile preview",
+    "build:android:production": "npx --yes eas-cli@27.2.0 build --platform android --profile production"
+  },
+  "overrides": {
+    "glob@^13.0.0": "14.0.3",
+    "minimatch@^10.0.0": "11.0.3"
+  },
+  "dependencies": {
+    "@react-native-community/netinfo": "12.0.1",
+    "@react-navigation/bottom-tabs": "^7.21.0",
+    "@react-navigation/native": "^7.5.1",
+    "@react-navigation/native-stack": "^7.21.0",
+    "@supabase/supabase-js": "2.118.0",
+    "expo": "~58.0.22",
+    "expo-camera": "~58.0.14",
+    "expo-crypto": "~58.0.7",
+    "expo-linking": "~58.0.15",
+    "expo-secure-store": "~58.0.2",
+    "expo-sqlite": "~58.0.15",
+    "expo-status-bar": "~58.0.4",
+    "expo-system-ui": "~58.0.7",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-screens": "~4.30.1",
+    "react-native-url-polyfill": "4.0.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.14",
+    "@testing-library/react-native": "^14.1.0",
+    "@types/jest": "30.0.0",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "@types/react": "~19.3.0",
+    "babel-preset-expo": "~58.0.23",
+    "embedded-postgres": "17.11.0-beta.19",
+    "eslint": "^9.39.0",
+    "eslint-config-expo": "~58.0.4",
+    "jest": "~30.5.2",
+    "jest-expo": "~58.0.13",
+    "prettier": "~3.9.10",
+    "tsx": "^4.20.0",
+    "typescript": "~6.0.3"
+  }
+}
