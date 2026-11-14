@@ -6,12 +6,15 @@ import { withPostgres } from './lib/pg-harness';
  * Prints the OwnerBook schema fingerprint produced by a local native PostgreSQL
  * 17 server with every migration applied.
  *
- * The same SQL (scripts/sql/schema-fingerprint.sql) is run against a hosted
+ * Any SQL file returning one row can be fingerprinted: pass its path as the
+ * first argument (for example scripts/sql/grant-audit.sql). The same text is run
+ * against a hosted
  * Supabase project; matching digests prove the hosted schema is identical to the
  * one the local suites test. Usage: npm run fingerprint
  */
 async function main(): Promise<void> {
-  const sql = await readFile(join(process.cwd(), 'scripts/sql/schema-fingerprint.sql'), 'utf8');
+  const file = process.argv[2] ?? 'scripts/sql/schema-fingerprint.sql';
+  const sql = await readFile(join(process.cwd(), file), 'utf8');
   await withPostgres(
     async (harness) => {
       const result = await harness.admin.query(sql);
