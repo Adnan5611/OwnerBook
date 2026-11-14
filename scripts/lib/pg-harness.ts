@@ -152,6 +152,13 @@ export async function withPostgres(
     },
   };
   try {
+    // Hosted Supabase runs UTF8. The default sandbox locale is POSIX/C, which
+    // makes initdb create a SQL_ASCII cluster where char_length() counts bytes
+    // instead of characters, so validation limits would be tested against a
+    // different encoding than production. C.utf8 is the closest available match
+    // (en_US.UTF-8 cannot be generated in this sandbox).
+    process.env.LC_ALL = 'C.utf8';
+    process.env.LANG = 'C.utf8';
     await pg.initialise();
     await pg.start();
     started = true;
@@ -164,6 +171,20 @@ export async function withPostgres(
     });
     await admin.connect();
     harness.admin = admin;
+    const locale = await admin.query(
+      `select pg_encoding_to_char(encoding) as encoding, datcollate
+         from pg_database where datname = current_database()`,
+    );
+    assert.equal(
+      locale.rows[0]?.encoding,
+      'UTF8',
+      `test database must use UTF8 like hosted Supabase, got ${String(locale.rows[0]?.encoding)}`,
+    );
+    assert.equal(
+      locale.rows[0]?.datcollate,
+      'C.utf8',
+      `test database collation changed, got ${String(locale.rows[0]?.datcollate)}`,
+    );
     await admin.query(`
       create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls;

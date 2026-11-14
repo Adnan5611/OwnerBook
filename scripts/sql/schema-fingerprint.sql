@@ -1,96 +1,104 @@
 -- Deterministic fingerprint of the OwnerBook schema.
 --
 -- The same text is executed against the local native-PostgreSQL harness
--- (scripts/schema-fingerprint.ts) and against a hosted Supabase project, so the
--- two digests can be compared. Equal digests mean equal schemas.
+-- (npm run fingerprint) and against a hosted Supabase project, so the two
+-- digests can be compared. Equal digests mean equal schemas.
+--
+-- Every category is ordered by the sha256 hex of each line rather than by the
+-- line itself: hex is plain ASCII, so the order is identical under the C
+-- collation the local harness uses and the en_US.UTF-8 collation hosted
+-- Supabase uses. Ordering by text would make the digest collation-dependent and
+-- the comparison useless.
 --
 -- Deliberately excluded, because they differ between environments for reasons
 -- unrelated to the migrations:
 --   * objects outside public/private (auth.uid() is a stub locally),
 --   * public.rls_auto_enable (a hosted Supabase event trigger function),
 --   * extension availability,
---   * grants to roles other than anon/authenticated/service_role.
-with cols as (
-  select string_agg(
-           table_name || '.' || column_name || ':' || coalesce(udt_name, '-')
-             || ':' || coalesce(numeric_precision::text, '-')
-             || ':' || coalesce(numeric_scale::text, '-')
-             || ':' || is_nullable || ':' || coalesce(column_default, '-'),
-           E'\n' order by table_name, column_name
-         ) as s
+--   * grants to roles other than anon/authenticated/service_role/PUBLIC.
+with col_lines as (
+  select table_name || '.' || column_name || ':' || coalesce(udt_name, '-')
+           || ':' || coalesce(numeric_precision::text, '-')
+           || ':' || coalesce(numeric_scale::text, '-')
+           || ':' || is_nullable || ':' || coalesce(column_default, '-') as line
   from information_schema.columns
   where table_schema = 'public'
 ),
-fns as (
-  select string_agg(
-           n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid)
-             || ')->' || pg_get_function_result(p.oid) || ':' || p.prosecdef::text || ':' || p.provolatile::text
-             || ':' || coalesce(array_to_string(p.proconfig, ','), '-'),
-           E'\n' order by 1
-         ) as s
+fn_lines as (
+  select n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid)
+           || ')->' || pg_get_function_result(p.oid) || ':' || p.prosecdef::text || ':'
+           || p.provolatile::text || ':' || coalesce(array_to_string(p.proconfig, ','), '-') as line
   from pg_proc p
   join pg_namespace n on n.oid = p.pronamespace
   where n.nspname in ('public', 'private')
     and p.proname <> 'rls_auto_enable'
 ),
-pol as (
-  select string_agg(
-           tablename || '.' || policyname || ':' || cmd || ':' || array_to_string(roles, ',')
-             || ':' || coalesce(qual, '-') || ':' || coalesce(with_check, '-'),
-           E'\n' order by 1
-         ) as s
+pol_lines as (
+  select tablename || '.' || policyname || ':' || cmd || ':' || array_to_string(roles, ',')
+           || ':' || coalesce(qual, '-') || ':' || coalesce(with_check, '-') as line
   from pg_policies
   where schemaname = 'public'
 ),
-trg as (
-  select string_agg(
-           event_object_table || '.' || trigger_name || ':' || action_timing || ':'
-             || event_manipulation || ':' || action_orientation || ':' || action_statement,
-           E'\n' order by 1
-         ) as s
+trg_lines as (
+  select event_object_table || '.' || trigger_name || ':' || action_timing || ':'
+           || event_manipulation || ':' || action_orientation || ':' || action_statement as line
   from information_schema.triggers
   where trigger_schema = 'public'
 ),
-idx as (
-  select string_agg(tablename || '.' || indexname || ':' || indexdef, E'\n' order by 1) as s
+idx_lines as (
+  select tablename || '.' || indexname || ':' || indexdef as line
   from pg_indexes
   where schemaname = 'public'
 ),
-rls as (
-  select string_agg(c.relname || ':' || c.relrowsecurity::text || ':' || c.relforcerowsecurity::text,
-                    E'\n' order by 1) as s
+rls_lines as (
+  select c.relname || ':' || c.relrowsecurity::text || ':' || c.relforcerowsecurity::text as line
   from pg_class c
   join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r'
 ),
-tgr as (
-  select string_agg(
-           n.nspname || '.' || c.relname || ':' || pg_catalog.array_to_string(c.relacl, ','),
-           E'\n' order by 1
-         ) as s
+acl_lines as (
+  select n.nspname || '.' || c.relname || ':' || coalesce(c.relacl::text, 'default') as line
   from pg_class c
   join pg_namespace n on n.oid = c.relnamespace
-  where n.nspname in ('public', 'private') and c.relkind in ('r', 'S')
+  where n.nspname = 'public' and c.relkind in ('r', 'S')
 ),
-tg as (
-  select string_agg(table_name || ':' || grantee || ':' || privilege_type, E'\n' order by 1) as s
+nsp_lines as (
+  select n.nspname || ':' || coalesce(n.nspacl::text, 'default') as line
+  from pg_namespace n
+  where n.nspname = 'private'
+),
+tg_lines as (
+  select table_name || ':' || grantee || ':' || privilege_type as line
   from information_schema.role_table_grants
   where table_schema = 'public'
     and grantee in ('anon', 'authenticated', 'service_role', 'PUBLIC')
 ),
-fg as (
-  select string_agg(specific_schema || '.' || routine_name || ':' || grantee || ':' || privilege_type,
-                    E'\n' order by 1) as s
+fg_lines as (
+  select specific_schema || '.' || routine_name || ':' || grantee || ':' || privilege_type as line
   from information_schema.routine_privileges
   where specific_schema in ('public', 'private')
     and grantee in ('anon', 'authenticated', 'service_role', 'PUBLIC')
+    and routine_name <> 'rls_auto_enable'
 ),
-sg as (
-  select string_agg(object_schema || ':' || grantee || ':' || privilege_type, E'\n' order by 1) as s
-  from information_schema.role_usage_grants
-  where object_type = 'SCHEMA'
-    and object_schema in ('public', 'private')
-    and grantee in ('anon', 'authenticated', 'service_role', 'PUBLIC')
+digested as (
+  select 'cols' as cat, line from col_lines
+  union all select 'fns', line from fn_lines
+  union all select 'pol', line from pol_lines
+  union all select 'trg', line from trg_lines
+  union all select 'idx', line from idx_lines
+  union all select 'rls', line from rls_lines
+  union all select 'acl', line from acl_lines
+  union all select 'nsp', line from nsp_lines
+  union all select 'tg', line from tg_lines
+  union all select 'fg', line from fg_lines
+),
+per_cat as (
+  select cat,
+         count(*) as line_count,
+         string_agg(line, E'\n'
+           order by encode(extensions.digest(convert_to(line, 'UTF8'), 'sha256'), 'hex')) as body
+  from digested
+  group by cat
 )
 select
   (select count(*) from information_schema.tables where table_schema = 'public') as tables,
@@ -107,13 +115,7 @@ select
   (select count(*) from information_schema.columns
     where table_schema = 'public' and data_type in ('double precision', 'real')) as float_columns,
   (select public.ownerbook_health() ->> 'schema_version') as schema_version,
-  left(encode(extensions.digest(convert_to(coalesce((select s from cols), ''), 'UTF8'), 'sha256'), 'hex'), 16) as cols_sha,
-  left(encode(extensions.digest(convert_to(coalesce((select s from fns), ''), 'UTF8'), 'sha256'), 'hex'), 16) as fns_sha,
-  left(encode(extensions.digest(convert_to(coalesce((select s from pol), ''), 'UTF8'), 'sha256'), 'hex'), 16) as pol_sha,
-  left(encode(extensions.digest(convert_to(coalesce((select s from trg), ''), 'UTF8'), 'sha256'), 'hex'), 16) as trg_sha,
-  left(encode(extensions.digest(convert_to(coalesce((select s from idx), ''), 'UTF8'), 'sha256'), 'hex'), 16) as idx_sha,
-  left(encode(extensions.digest(convert_to(coalesce((select s from rls), ''), 'UTF8'), 'sha256'), 'hex'), 16) as rls_sha,
-  left(encode(extensions.digest(convert_to(coalesce((select s from tgr), ''), 'UTF8'), 'sha256'), 'hex'), 16) as tgr_sha,
-  left(encode(extensions.digest(convert_to(coalesce((select s from tg), ''), 'UTF8'), 'sha256'), 'hex'), 16) as tg_sha,
-  left(encode(extensions.digest(convert_to(coalesce((select s from fg), ''), 'UTF8'), 'sha256'), 'hex'), 16) as fg_sha,
-  left(encode(extensions.digest(convert_to(coalesce((select s from sg), ''), 'UTF8'), 'sha256'), 'hex'), 16) as sg_sha
+  (select string_agg(cat || '=' || line_count || ':'
+      || left(encode(extensions.digest(convert_to(body, 'UTF8'), 'sha256'), 'hex'), 16),
+      ' ' order by cat)
+     from per_cat) as digests
