@@ -17,6 +17,7 @@
     "test:db": "tsx scripts/test-database.ts",
     "test:postgres": "tsx scripts/test-postgres.ts",
     "test:ledger": "tsx scripts/test-ledger.ts",
+    "fingerprint": "tsx scripts/schema-fingerprint.ts",
     "check:android": "tsx scripts/check-android.ts",
     "check:env": "node --env-file-if-exists=.env --import tsx scripts/check-env.ts",
     "eas-build-post-install": "npm run check:env",
