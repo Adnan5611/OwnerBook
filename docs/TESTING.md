@@ -79,11 +79,28 @@ The harness uses a non-root OS user, an available localhost port and a temporary
 - Reports: revenue, COGS, gross profit, net profit, `cogs_coverage_percent`, receivables and cash per method are re-derived in SQL inside the test and compared with the RPC output — including a case where cash (`-1120.35`) and profit (`323.30`) legitimately disagree.
 - Currency lock after financial activity, archived-business write refusal, a `300.75` concurrency case, activity/audit feed content and `schema_version = 3`.
 
-Neither SQL suite starts GoTrue, PostgREST, Storage or Realtime. Passing them is not evidence of a hosted Supabase deployment.
+Neither SQL suite starts GoTrue, PostgREST, Storage or Realtime. Passing them is not by itself evidence of a hosted Supabase deployment, which is why the two tools below exist.
+
+### Hosted acceptance and schema equivalence
+
+`test:acceptance` runs `scripts/sql/hosted-acceptance.sql` against the local native cluster first. That file is the hosted counterpart of `test:ledger`: it drives the real RPCs end to end (profile trigger, business creation, khata opening balance, catalog snapshotting, exact per-line rounding, idempotent replay, partial payment, an overpayment becoming a visible advance and a refund settling it, voids, net profit, three `0.10` adjustments summing to exactly `0.30`, statement running balances, the currency lock, activity rows, missing client write privileges, non-member refusal, symmetric isolation, ledger immutability, health) and reports PASS/FAIL per check. Proving the SQL locally before running it against a live project is what caught three wrong expectations of the author rather than shipping them.
+
+Every row it writes is discarded. The work runs inside a PL/pgSQL block whose changes a deliberate exception rolls back, while the results array survives because variables are not part of the subtransaction. This matters because the financial triggers block `DELETE` even for the table owner, so a rollback is the only way to test a live project without permanently polluting it. After a hosted run, re-count every table and `auth.users` to confirm all are 0.
+
+`fingerprint` runs `scripts/sql/schema-fingerprint.sql`, which digests ten categories of schema definition (columns, functions, policies, triggers, indexes, RLS flags, table ACLs, the private schema ACL, table grants, function grants) plus counts. The runner takes any single-row SQL file as an argument, so `scripts/sql/grant-audit.sql` and `scripts/sql/line-fingerprint.sql` run through it too. Executing the same text on both sides and comparing digests is what proves a deployment matches the repository; `line-fingerprint.sql` then identifies the exact differing objects when a digest does not match.
+
+Two rules keep that comparison meaningful:
+
+- Each category is ordered by the SHA-256 hex of every line, not by the line itself. Hex is plain ASCII, so the digest is the same under the `C.utf8` collation the local harness uses and the `en_US.UTF-8` collation hosted Supabase uses. Ordering by text made identical schemas digest differently.
+- The harness asserts `UTF8` and `C.utf8` before applying migrations. The sandbox locale is POSIX, and a SQL_ASCII cluster made `char_length()` count **bytes**, so character-length validation limits were being tested against a different encoding than production. `en_US.UTF-8` cannot be generated here (no charmaps, no root), so the residual collation difference is documented: name ordering in tests can differ from a device.
+
+On the provisioned project this produced 7 of 10 categories byte-identical, 124 of 124 function/trigger/index lines matching one-for-one, and three grant categories differing by exactly the Supabase platform baseline (`service_role` gets `arwdDxtm` on 15 tables = 105 grant rows, and EXECUTE on 34 functions). The security-relevant answers were identical on both sides: 0 client write grants, 13 RLS-filtered SELECT grants, EXECUTE on exactly the 8 intended private helpers and none on the tenant-probing one, 0 EXECUTE for `PUBLIC` or `service_role` on OwnerBook functions, an identical `private` schema ACL, and 22 SECURITY DEFINER functions all with a pinned `search_path`.
 
 ## Required hosted/device acceptance before release
 
 Use a staging project, at least two confirmed users and two businesses. Never run destructive tests against real business data. Keep privileged setup keys outside the app and Git.
+
+Status: the database-level gates below (tenancy, permissions, isolation, khata, sales, expenses, traceability) are now covered **on a hosted Supabase project** by `hosted-acceptance.sql` plus the fingerprint and grant audits. What a hosted SQL run still cannot cover is anything that needs a real client: issued JWTs over HTTP, Auth redirects on a device, Realtime subscriptions, Storage objects, and every Android row. Those remain open until an APK exists.
 
 | Gate         | Required evidence                                                                                                                                                                               |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

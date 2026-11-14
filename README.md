@@ -31,7 +31,9 @@ This is a native Android application, not a website-only dashboard. Every balanc
 - Real PostgreSQL isolation/privilege tests, including independent connections and an accept/revoke race.
 - Validated public configuration, Android APK build profiles and local/CI verification gates.
 
-**Not delivered yet:** hosted Supabase verification, a signed/installable APK, suppliers/purchases, stock quantities and valuation, payroll, chat, invoicing with tax, sales returns, an audit browser, or offline financial synchronization. SQLite is installed but its cache/outbox is deliberately not enabled. No paid service has been provisioned.
+**Hosted and verified:** the free-tier Supabase project `uplbjnbislmzmiykiylt` carries all three migrations (applied server-side from an immutable commit SHA, SHA-256 verified byte for byte), reports `schema_version = 3`, matches the local schema fingerprint on every definition category, and passes **28 behavioural acceptance checks** with every table left at 0 rows.
+
+**Not delivered yet:** a signed/installable APK, an on-device client round trip through GoTrue/PostgREST with real JWTs, suppliers/purchases, stock quantities and valuation, payroll, chat, invoicing with tax, sales returns, an audit browser, Realtime, or offline financial synchronization. SQLite is installed but its cache/outbox is deliberately not enabled. No paid service has been provisioned.
 
 See [the Phase 3 report](docs/PHASE_3.md) for exact verification, changed files, limitations and manual acceptance steps. [Phase 2](docs/PHASE_2.md) and [Phase 1](docs/PHASE_1.md) remain historical checkpoints.
 
@@ -87,7 +89,7 @@ npm run check:android                 # native configuration, not compilation
 npm audit --omit=dev --audit-level=high
 ```
 
-See [docs/TESTING.md](docs/TESTING.md). Mocked SecureStore/Auth tests and embedded PostgreSQL checks are not substitutes for physical-device and hosted-project tests. `test:postgres` uses real native PostgreSQL 17, starts a temporary local cluster, and removes its test data afterward. It does not start Supabase Auth or PostgREST.
+See [docs/TESTING.md](docs/TESTING.md). Mocked SecureStore/Auth tests and embedded PostgreSQL checks are not substitutes for physical-device tests. The database side is now verified on a hosted project too: `npm run test:acceptance` runs the same SQL locally that was executed against it, and `npm run fingerprint` digests the schema so both sides can be compared. `test:postgres` uses real native PostgreSQL 17, starts a temporary local cluster, and removes its test data afterward. It does not start Supabase Auth or PostgREST.
 
 ## Android APK
 
@@ -110,8 +112,8 @@ The final product release remains gated on all modules, hosted security tests, d
 | Phase | Scope                                                 | Status                                                |
 | ----- | ----------------------------------------------------- | ----------------------------------------------------- |
 | 1     | Expo architecture, Supabase connection, build setup   | Implemented locally; historical report retained       |
-| 2     | Auth, businesses, invitations, roles and RLS          | Implemented locally; hosted/device acceptance pending |
-| 3     | Customers, khata, payments, sales, expenses           | Implemented locally; hosted/device acceptance pending |
+| 2     | Auth, businesses, invitations, roles and RLS          | Implemented; hosted database verified; device pending |
+| 3     | Customers, khata, payments, sales, expenses           | Implemented; hosted database verified; device pending |
 | 4     | Suppliers, purchases, inventory                       | Not implemented                                       |
 | 5     | Staff, attendance, payroll                            | Not implemented                                       |
 | 6     | Chat, voice/photos, activity feed                     | Not implemented                                       |

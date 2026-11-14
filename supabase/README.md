@@ -1,11 +1,26 @@
-# OwnerBook database — schema version 2
+# OwnerBook database — schema version 3
 
-Migrations are ordered by filename and are the source of truth. Apply both:
+Migrations are ordered by filename and are the source of truth. Apply all three:
 
 1. `20261101000100_foundation.sql`: private helper schema and health RPC.
 2. `20261102000100_identity_businesses.sql`: profiles, businesses, memberships, invitations, currencies, audit logs, RLS and authenticated RPCs.
+3. `20261103000100_khata_sales_expenses.sql`: customers, products, sales, sale items, payments, expenses, the append-only customer ledger, activity logs, idempotency receipts, the read models and the financial write RPCs.
 
-There are no financial seed records, demo balances, permissive anon policies or client-supplied actor IDs. The second migration intentionally supersedes health schema version 1 with version 2.
+There are no financial seed records, demo balances, permissive anon policies or client-supplied actor IDs. Each migration intentionally supersedes the previous health schema version, so `select * from public.ownerbook_health();` must report `schema_version = 3` after all three are applied.
+
+## Applied and verified on a hosted project
+
+The free-tier project `uplbjnbislmzmiykiylt` (eu-west-1) carries all three migrations. They were applied server-side: the project fetched each file from `raw.githubusercontent.com` at an immutable commit SHA with `extensions.http_get`, its SHA-256 was compared with the repository's `sha256sum`, and only then was it executed (with the file's own `begin;`/`commit;` stripped, because transaction control is illegal inside a PL/pgSQL block). The same three versions are recorded in `supabase_migrations.schema_migrations`, so `supabase migration list` shows them as applied and `supabase db push` will not re-apply them.
+
+The deployed schema was then compared with the local one and accepted behaviourally:
+
+```sh
+npm run fingerprint                              # local schema digest
+npm run fingerprint -- scripts/sql/grant-audit.sql   # local privilege audit
+npm run test:acceptance                          # local run of the hosted acceptance SQL
+```
+
+Run the same three files against the project (see `docs/PHASE_3.md` for the exact transport) and compare. Result on the provisioned project: 7 of 10 fingerprint categories byte-identical, 124 of 124 function/trigger/index lines matching one-for-one, the three grant categories differing only by Supabase's own `service_role` default privileges, 0 client write grants, and **28 of 28 acceptance checks passed with every table and `auth.users` back at 0 rows**.
 
 ## Apply to your project
 
@@ -91,10 +106,12 @@ Currency is editable only because no financial operations exist yet. **Phase 3 m
 ## Local verification
 
 ```sh
-npm run test:db        # PGlite: migration/health/grant checks
-npm run test:postgres  # real native PostgreSQL 17: RLS/RPC/concurrency tests
+npm run test:db         # PGlite: migration/health/grant checks
+npm run test:postgres   # real native PostgreSQL 17: RLS/RPC/concurrency tests
+npm run test:ledger     # real native PostgreSQL 17: 220 Phase 3 accounting checks
+npm run test:acceptance # the hosted acceptance SQL, proven locally first
 ```
 
 The native test dependency is pinned to `embedded-postgres@17.11.0-beta.19` (a beta test harness, not a production service or mobile dependency). It downloads platform-specific open-source PostgreSQL binaries through npm, starts a temporary localhost cluster as a non-root user, and removes its workspace data directory afterward. Linux x64 is verified here and used by CI. Other platforms may need a locally installed PostgreSQL/Supabase test setup. The app itself never embeds PostgreSQL.
 
-Tests create a minimal `auth.users`/`auth.uid()` fixture and real Supabase-like roles. They are **not** a running Supabase Auth/PostgREST deployment. Before release, test actual JWTs, direct REST requests, email delivery/callbacks, Auth rate limits, current-membership revocation and concurrent RPCs against a staging Supabase project. Never put a service-role key in the mobile environment.
+Tests create a minimal `auth.users`/`auth.uid()` fixture and real Supabase-like roles, in a UTF8 cluster because a SQL_ASCII cluster would make `char_length()` count bytes instead of characters. They are **not** a running Supabase Auth/PostgREST deployment. Before release, test actual JWTs, direct REST requests, email delivery/callbacks, Auth rate limits, current-membership revocation and concurrent RPCs against a staging Supabase project. Never put a service-role key in the mobile environment.

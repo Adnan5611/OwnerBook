@@ -119,7 +119,8 @@ are unchanged; Chat still states that it is not enabled (Phase 6).
 ## Verification
 
 Environment: Node 22.22.3, npm 10.9.8, Linux x64, no Java/Android SDK/ADB, no
-Docker, no local PostgreSQL server, no hosted Supabase project, no EAS account.
+Docker, no local PostgreSQL server, no EAS account. A hosted Supabase project is now
+provisioned, migrated and verified; see the next section.
 
 | Check                                                       | Result                                                    |
 | ----------------------------------------------------------- | --------------------------------------------------------- |
@@ -203,12 +204,148 @@ called `navigate('Businesses')`, but that route is only mounted while the picker
 open, so the action was silently unhandled. It now goes through an explicit
 workspace-action context that opens the picker.
 
+## Hosted Supabase verification
+
+The Supabase project `OwnerBook` (`uplbjnbislmzmiykiylt`, eu-west-1, PostgreSQL
+17.11.003) was paused. After restoring it, inspection showed an **unrelated earlier
+scaffold**: 13 tables (`transactions`, `stock_transactions`, `salary_transactions`,
+`staff`, `chat_messages`, …), **0 rows in every table**, **0 `auth.users`**, 0
+policies, no `private` schema and one platform function. Five names collided with
+OwnerBook's (`businesses`, `business_members`, `customers`, `products`, `profiles`),
+so the scaffold was dropped with the owner's approval. Nothing was lost: no rows and
+no users existed. The platform's `rls_auto_enable` event trigger was kept, because it
+enforces RLS on every new `public` table.
+
+This sandbox has no network route to Supabase (DNS resolves, connections are
+blocked), so the migrations were applied **server-side**. The project's own
+`extensions.http_get` fetched each file from `raw.githubusercontent.com` at an
+immutable commit SHA; the SHA-256 of the fetched bytes was compared with the
+repository's `sha256sum` and only then was the script executed:
+
+| Migration                                 | Bytes  | SHA-256 verified identical on both sides |
+| ----------------------------------------- | ------ | ---------------------------------------- |
+| `20261101000100_foundation.sql`           | 1168   | `11ecd2e7af6cbece…5d619bdbd`             |
+| `20261102000100_identity_businesses.sql`  | 29924  | `b64d19ac63f9564c…7daf945f`              |
+| `20261103000100_khata_sales_expenses.sql` | 102630 | `e033ac41971528c3…a26a9e872`             |
+
+Each file's own `begin;`/`commit;` lines were stripped before `EXECUTE`, because
+transaction control is illegal inside a PL/pgSQL block; atomicity is preserved since
+the whole script runs in one transaction. A deliberately broken attempt (an invalid
+`encode(…, 'sha256')` algorithm name) confirmed the rollback: the project still
+reported version 2 and 6 tables afterwards.
+
+**Result on the hosted project:** `schema_version = 3`, 15 tables, 159 columns,
+34 public functions, 25 private functions, 14 policies, 25 trigger events,
+40 indexes, **0 tables without RLS**, **0 float money columns**. Migration history was
+recorded in `supabase_migrations.schema_migrations` with the same three versions as
+the filenames, and the Supabase API reports exactly those three, so `supabase
+migration list` / `db push` will treat them as applied rather than re-applying them.
+
+### Hosted schema equals the local schema
+
+`scripts/sql/schema-fingerprint.sql` digests ten categories of schema definition.
+The same text runs locally (`npm run fingerprint`) and on the hosted project.
+
+| Category                   | Local              | Hosted             | Verdict                                  |
+| -------------------------- | ------------------ | ------------------ | ---------------------------------------- |
+| `cols` (159 columns)       | `7e1d65298f168753` | `7e1d65298f168753` | identical                                |
+| `fns` (59 functions)       | `243e48d29d3da6d5` | `243e48d29d3da6d5` | identical                                |
+| `pol` (14 policies)        | `fae44a7677e15bb9` | `fae44a7677e15bb9` | identical                                |
+| `rls` (15 tables)          | `afb7f604d402d850` | `afb7f604d402d850` | identical                                |
+| `trg` (25 triggers)        | `46f28bbe40e7c85d` | `46f28bbe40e7c85d` | identical                                |
+| `idx` (40 indexes)         | `381cd5e630884cb5` | `381cd5e630884cb5` | identical                                |
+| `nsp` (private schema ACL) | `028a1751d9ca9718` | `028a1751d9ca9718` | identical                                |
+| `acl` (15 table ACLs)      | `0c18e004db83c625` | `1f659901d38857c9` | differs: `service_role=arwdDxtm`         |
+| `tg` (table grants)        | 13 lines           | 118 lines          | differs: +105 = 15 tables × 7 privileges |
+| `fg` (function grants)     | 45 lines           | 79 lines           | differs: +34 `service_role` EXECUTE      |
+
+The three differences are Supabase's own `ALTER DEFAULT PRIVILEGES`, and the
+arithmetic is exact. A per-line fingerprint (`scripts/sql/line-fingerprint.sql`)
+proved it: **124 of 124 function, trigger and index lines matched one-for-one**, with
+no line present on only one side. So the earlier whole-category digest mismatch was
+ordering, not schema.
+
+`scripts/sql/grant-audit.sql` answers the security questions directly, and both sides
+agree on everything that matters: **0 INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER
+grants to `anon`/`authenticated`**, 13 RLS-filtered SELECT grants (needed by the
+SECURITY INVOKER read models), EXECUTE on exactly 8 private helpers
+(`active_business_ids`, `has_role`, `is_member`, `money_scale`, `require_roles`,
+`role_business_ids`, `round_money`, `shares_business`) and **not** on the
+tenant-probing helper, 0 EXECUTE for `PUBLIC` or `service_role` on any OwnerBook
+function, an identical `private` schema ACL (`postgres=UC`, `authenticated=U`), and
+22 SECURITY DEFINER functions all with a pinned `search_path`.
+
+### A real fidelity bug this comparison found
+
+The local harness cluster was **SQL_ASCII with the C collation**, because the sandbox
+locale is POSIX. Under SQL_ASCII `char_length()` counts **bytes**, so the 1–120
+character validation limits were being tested against a different encoding than
+production, and non-ASCII input was never validated as UTF-8. The harness now
+initialises with `C.utf8` and asserts UTF8 before applying migrations, so a locale
+regression fails loudly. `en_US.UTF-8` (hosted) cannot be generated here: no
+charmaps, no root. The fingerprint therefore orders every category by the SHA-256 hex
+of each line — plain ASCII, so the digest is collation-independent — and the residual
+collation difference is documented rather than hidden.
+
+### 28 behavioural acceptance checks on the hosted project
+
+`scripts/sql/hosted-acceptance.sql` runs the real RPCs end to end and was executed on
+the hosted project: **28 passed, 0 failed** (`npm run test:acceptance` runs the same
+file locally first, 29 lines including the harness's own migration check).
+
+It proves, against hosted Postgres with real `auth.uid()` and real RLS: the profile
+trigger fires on `auth.users`; business creation records the owner; a khata opens with
+an exact balance; the catalog's four-decimal price is snapshotted;
+`1.5 × 199.999` rounds to `300.00` per line and totals to `400.50 − 0.50 = 400.00`
+with COGS `210.00`; a repeated `operation_id` replays instead of double-posting a
+customer or a sale; a partial payment leaves exactly `800.00`; an overpayment becomes
+an exact visible advance (`-99199.00`) and a refund settles it back to `800.00`;
+voiding a payment or sale appends reversing entries and keeps the document; net profit
+is `400.00 − 210.00 − 250.75 = -60.75`; three `0.10` adjustments sum to exactly
+`0.30`; statement running balances equal the cumulative ledger sum and the closing
+balance; the currency locks once history exists; every write produced an activity row;
+an authenticated client has no INSERT/UPDATE privilege; non-members are refused
+outright (`42501`) on reads and writes; isolation is symmetric; the ledger rejects
+UPDATE even for the table owner; and the health endpoint reports version 3.
+
+**The run left nothing behind.** All work happens inside a PL/pgSQL block whose
+changes a deliberate exception rolls back, while the results array survives because
+variables are not part of the subtransaction — necessary, because the financial
+triggers block DELETE even for the owner. Afterwards every public table and
+`auth.users` were counted again: all **0**.
+
+Writing this suite exposed three wrong expectations of mine, all in the test rather
+than the product, and all corrected: an overpayment is a documented **advance**, not
+an error (the ledger suite already asserted `-2999.25` then a refund to zero);
+read models **raise `42501` "Membership required"** for non-members instead of
+returning zero rows, which is stronger defence in depth; and a reused `v_pay` variable
+made the void target the refund instead of the original payment.
+
+### Configuration applied to the project
+
+- Auth `site_url` = `ownerbook://auth/confirmation`; redirect allowlist =
+  `ownerbook://auth/confirmation,ownerbook://auth/recovery`. Signup, email auth,
+  JWT expiry (3600 s) and email confirmation were left as they were. The API also
+  normalised four platform-managed fields to `null` (`rate_limit_email_sent`,
+  `security_captcha_provider`, `sms_provider`, session timeouts); captcha, SMS and
+  phone auth are disabled, so this changes no behaviour.
+- `.env` was written locally with the project URL and the **publishable** key
+  `sb_publishable_0gGFg…`. It is gitignored (`git check-ignore` confirms, `git status`
+  is clean). The legacy `service_role` JWT and the `sb_secret_…` key were **never**
+  written to any file, and never leave the server side.
+- `npm run check:env` passes. All eight services report `ACTIVE_HEALTHY`: GoTrue
+  v2.197.0, PostgREST (exposing `public,graphql_public`), Realtime, Storage, the
+  database, pooler and pg_bouncer.
+
 ## Known limitations (honest)
 
-1. **No hosted Supabase verification.** There is no `.env`, no project, no GoTrue,
-   PostgREST, Realtime or Storage in this environment. SQL suites run against a real
-   temporary PostgreSQL 17 cluster with minimal `auth.users`/`auth.uid()` fixtures.
-   JWT-based access, hosted rate limits and network behaviour are untested.
+1. **Hosted verification covers the database, not a real client.** The project is
+   migrated, schema-identical to the local one and passes 28 behavioural checks, but
+   no request has travelled from an app through GoTrue/PostgREST: issued JWTs, the
+   publishable key over HTTP, hosted rate limits, Realtime channels and Storage
+   buckets are still untested. The local suites use a minimal `auth.uid()` fixture,
+   and the hosted acceptance run sets the JWT claim directly instead of signing a
+   token.
 2. **No APK.** `expo export` produces a JavaScript bundle and `check:android`
    validates generated native configuration. Neither is a compiled or signed APK,
    and no device or emulator test has been run. Java/Android SDK/EAS are absent.
@@ -226,21 +363,26 @@ workspace-action context that opens the picker.
    understates COGS; the report shows the coverage percentage rather than hiding it.
 7. Development dependencies still emit deprecation warnings on install. The clean
    production audit is not a claim about every transitive dev package.
-8. Nothing has been committed or pushed by the agent; all work is in the working
-   tree on `arena/b7b90880-ownerbook`.
+8. **Collation differs from production.** The local cluster is `C.utf8`; hosted is
+   `en_US.UTF-8`. Text `ORDER BY` (customer and item names) can therefore sort
+   differently in tests than on a device. `en_US.UTF-8` cannot be generated in this
+   sandbox, so this is documented rather than fixed.
 
 ## Manual actions required from you
 
 Setup (once):
 
-1. `npm ci`, then `cp .env.example .env` and set
-   `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (never a
-   service-role key).
-2. Apply **all three** migrations in order with the Supabase CLI or the SQL editor,
-   as described in `supabase/README.md`. Confirm `select * from public.ownerbook_health();`
-   reports `schema_version = 3`.
-3. Configure the Auth redirect URLs for the `ownerbook://` scheme.
-4. `npm run check:env`, then `npm start` or `npx expo run:android`.
+1. **Done for the provisioned project** (`uplbjnbislmzmiykiylt`): `.env` written with
+   the URL and publishable key, all three migrations applied and recorded in
+   `supabase_migrations.schema_migrations`, Auth redirect URLs set, `check:env`
+   passing. For any _other_ project, repeat these steps as described in
+   `supabase/README.md`, and re-run `scripts/sql/hosted-acceptance.sql` against it.
+2. If you use your own machine instead: `npm ci`, `cp .env.example .env`, apply the
+   three migrations in order, confirm `ownerbook_health()` reports `schema_version = 3`,
+   set the `ownerbook://` redirect URLs, then `npm run check:env`.
+3. Re-run the hosted acceptance suite after any future migration, and re-run
+   `npm run fingerprint` on both sides to confirm the schemas still match.
+4. `npm start` or `npx expo run:android` once a device or emulator is available.
 
 Acceptance (staging data only):
 

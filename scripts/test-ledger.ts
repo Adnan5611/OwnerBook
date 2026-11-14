@@ -1871,7 +1871,7 @@ async function main() {
     },
     {
       summary:
-        'native PostgreSQL Phase 3 checks passed. Hosted Supabase and an on-device APK still require live testing.',
+        'native PostgreSQL Phase 3 checks passed. The hosted database is verified separately by scripts/sql/hosted-acceptance.sql; an on-device APK still requires live testing.',
     },
   );
 }

@@ -22,7 +22,7 @@
     "check:android": "tsx scripts/check-android.ts",
     "check:env": "node --env-file-if-exists=.env --import tsx scripts/check-env.ts",
     "eas-build-post-install": "npm run check:env",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run test:db && npm run test:postgres && npm run test:ledger",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run test:db && npm run test:postgres && npm run test:ledger && npm run test:acceptance",
     "build:android:preview": "npx --yes eas-cli@27.2.0 build --platform android --profile preview",
     "build:android:production": "npx --yes eas-cli@27.2.0 build --platform android --profile production"
   },

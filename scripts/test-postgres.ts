@@ -691,7 +691,7 @@ async function main() {
     },
     {
       summary:
-        'native PostgreSQL security checks passed. Hosted Supabase Auth/API still requires live testing.',
+        'native PostgreSQL security checks passed. The hosted database is verified separately by scripts/sql/hosted-acceptance.sql; a real client round trip through GoTrue/PostgREST still needs a device.',
     },
   );
 }

@@ -83,7 +83,7 @@ async function main() {
     checks += 1;
     console.log('  ✓ Anon cannot create objects in the private schema');
     console.log(
-      `\n${checks} SQL checks passed in embedded PostgreSQL. Live Supabase is not verified.`,
+      `\n${checks} SQL checks passed in embedded PostgreSQL. The hosted project is verified separately by scripts/sql/hosted-acceptance.sql.`,
     );
   } finally {
     await db.close();
